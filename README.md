@@ -217,7 +217,7 @@ The `.github/workflows/ci.yml` automatically:
 **Success Criteria:**
 - All 20 requests return HTTP 200
 - Headers switch from Blue to Green after chaos
-- No failed requests during failover
+- No failed requests during failover.
 
 ## Project Structure
 ```
