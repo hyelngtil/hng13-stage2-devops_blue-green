@@ -210,17 +210,18 @@ The `.github/workflows/ci.yml` automatically:
 6. ✅ Confirms Green takes over
 7. ✅ Stops chaos and cleans up
 
-**Trigger Events:**
+# Trigger Events:
 - Push to any branch
 - Pull requests
 
-**Success Criteria:**
+# Success Criteria:
 - All 20 requests return HTTP 200
 - Headers switch from Blue to Green after chaos
 - No failed requests during failover.
+```
 
 ## Project Structure
-```
+```bash
 .
 ├── .env.example              # Environment template
 ├── .gitignore               # Git ignore rules
@@ -238,7 +239,7 @@ The `.github/workflows/ci.yml` automatically:
 
 ## Failure Scenarios Handled
 | Scenario | Detection | Recovery | Downtime |
-|----------|-----------|----------|----------|
+| :-------- | :---------: | :--------: | --------: |
 | App crashes | Health check fails | Switch to backup | < 3s |
 | App hangs | Read timeout | Retry to backup | < 5s |
 | App returns 500 | HTTP status check | Retry to backup | < 1s |
