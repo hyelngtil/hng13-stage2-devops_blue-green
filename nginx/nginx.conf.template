@@ -1,0 +1,48 @@
+# Nginx site config: only upstream/server blocks here (no worker_processes or http{} wrapper)
+
+# Use Docker's embedded DNS resolver so nginx can resolve service names at runtime
+resolver 127.0.0.11 valid=30s;
+
+# When using "resolve" on server lines, the upstream must be placed in shared memory via "zone".
+# "64k" is plenty for a small upstream list.
+upstream backend {
+  zone backend 64k;
+  server ${PRIMARY_HOST}:${PORT} resolve max_fails=1 fail_timeout=2s;
+  server ${SECONDARY_HOST}:${PORT} resolve backup;
+  keepalive 16;
+}
+
+server {
+  listen 8080;
+
+  # very short timeouts so failover is fast (total request <= 10s)
+  proxy_connect_timeout 1s;
+  proxy_send_timeout 4s;
+  proxy_read_timeout 4s;
+  send_timeout 5s;
+
+  # retries for errors/timeouts and specific 5xx HTTP codes
+  proxy_next_upstream error timeout http_500 http_502 http_503 http_504;
+  proxy_next_upstream_tries 2;
+
+  # forward request headers (do not strip upstream response headers)
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+
+  location / {
+    proxy_pass http://backend;
+    proxy_buffering off;
+  }
+
+  location /healthz {
+    proxy_pass http://backend/healthz;
+  }
+
+  location /version {
+    proxy_pass http://backend/version;
+  }
+}
