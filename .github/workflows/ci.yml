@@ -4,60 +4,103 @@ on: [push, pull_request]
 
 jobs:
   verify:
-    runs-on: ubuntu-22.04
-    services:
-      docker:
-        image: docker:20.10.24
-        options: --privileged
+    runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Set up docker-compose
+      - name: Set up Docker
         run: |
-          sudo apt-get update
-          sudo apt-get install -y docker-compose-plugin docker.io perl
+          # Docker is already installed on ubuntu-latest
           docker --version
-          docker compose version
+          
+          # Install docker-compose (standalone)
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+          
+          # Install perl (for toggle_pool.sh)
+          sudo apt-get update
+          sudo apt-get install -y perl
 
-      - name: Copy example env (CI should override with grader env)
+      - name: Copy example env
         run: cp .env.example .env
+
+      - name: Create nginx directory
+        run: mkdir -p nginx
 
       - name: Start stack
         run: |
           chmod +x start.sh
           ./start.sh
-          sleep 2
+          sleep 3
 
       - name: Baseline check via nginx
         run: |
-          sleep 1
+          echo "Checking nginx endpoint..."
           curl -s -D - http://localhost:8080/version -o /tmp/version_out || true
+          echo "Response headers:"
           grep -i "HTTP/" /tmp/version_out || true
           grep -i "X-App-Pool" /tmp/version_out || true
           grep -i "X-Release-Id" /tmp/version_out || true
 
       - name: Trigger chaos on blue
         run: |
+          echo "Triggering chaos on blue app..."
           curl -s -X POST "http://localhost:8081/chaos/start?mode=error" || true
-          sleep 0.5
+          sleep 1
 
-      - name: Run multiple requests and assert
+      - name: Run multiple requests and verify failover
         run: |
+          echo "Testing failover with 20 requests..."
           PASS=0
+          GREEN_COUNT=0
+          
           for i in $(seq 1 20); do
             HEADERS=$(curl -s -D - http://localhost:8080/version -o /dev/null)
             echo "$i -> $(echo "$HEADERS" | egrep -i 'X-App-Pool|HTTP/' | tr '\n' ' ')"
-            echo "$HEADERS" | egrep -i 'HTTP/.*200' || { echo "Non-200 detected"; exit 1; }
-            echo "$HEADERS" | egrep -i 'X-App-Pool: green' || true
+            
+            # Check for 200 status
+            echo "$HEADERS" | egrep -i 'HTTP/.*200' || { 
+              echo "❌ Non-200 detected at request $i"; 
+              exit 1; 
+            }
+            
+            # Count green responses
+            if echo "$HEADERS" | egrep -i 'X-App-Pool: green' > /dev/null; then
+              GREEN_COUNT=$((GREEN_COUNT+1))
+            fi
+            
             PASS=$((PASS+1))
             sleep 0.25
           done
-          echo "Requests done: $PASS"
+          
+          echo "✓ All $PASS requests returned 200 OK"
+          echo "✓ Green responses: $GREEN_COUNT out of 20"
+          
+          # Verify failover happened (at least 15 out of 20 should be green)
+          if [ $GREEN_COUNT -lt 15 ]; then
+            echo "❌ Failover did not occur properly. Expected ≥15 green responses, got $GREEN_COUNT"
+            exit 1
+          fi
+          
+          echo "✓ Failover successful!"
 
       - name: Stop chaos on blue
         run: |
+          echo "Stopping chaos..."
           curl -s -X POST "http://localhost:8081/chaos/stop" || true
 
+      - name: Show container status
+        if: always()
+        run: |
+          echo "Container status:"
+          docker-compose ps
+          echo ""
+          echo "Nginx logs:"
+          docker-compose logs nginx | tail -20
+
       - name: Tear down
+        if: always()
         run: docker-compose down -v
